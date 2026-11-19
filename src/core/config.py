@@ -6,7 +6,7 @@ Hai tầng model (không trộn):
   Blue Team (CP2–CP3, guardrails / pipeline / protected agent)
     → CỐ ĐỊNH OpenRouter ``liquid/lfm-2.5-24b-a2b``
        https://openrouter.ai/liquid/lfm-2.5-24b-a2b
-    → Cần ``OPENROUTER_API_KEY``
+    → Cần ``LIQUID_API_KEY`` (Liquid AI API; OpenRouter fallback dùng ``OPENROUTER_API_KEY``)
 
   Red Team (CP4)
     → Chọn một provider: OpenAI hoặc Gemini
@@ -33,11 +33,15 @@ except ImportError:
 PROVIDER_OPENAI = "openai"
 PROVIDER_GEMINI = "gemini"
 PROVIDER_OPENROUTER = "openrouter"
+PROVIDER_LIQUID = "liquid"
 
 # --- Blue Team (LOCKED) ---
-BLUE_PROVIDER = PROVIDER_OPENROUTER
-BLUE_MODEL = "liquid/lfm-2.5-24b-a2b"
+# Liquid AI's own OpenAI-compatible API (OpenRouter account had insufficient funds).
+# To switch back: BLUE_PROVIDER = PROVIDER_OPENROUTER, BLUE_MODEL = "liquid/lfm-2.5-24b-a2b".
+BLUE_PROVIDER = PROVIDER_LIQUID
+BLUE_MODEL = "lfm2.5-24b-a2b"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+LIQUID_BASE_URL = "https://api.liquid.ai/openai/v1"
 DEFAULT_OPENROUTER_MODEL = BLUE_MODEL  # alias
 
 # --- Red Team ---
@@ -112,10 +116,20 @@ def get_openrouter_api_key() -> str:
     return os.environ.get("OPENROUTER_API_KEY", "").strip()
 
 
+def blue_api_key_name() -> str:
+    return "LIQUID_API_KEY" if BLUE_PROVIDER == PROVIDER_LIQUID else "OPENROUTER_API_KEY"
+
+
 def blue_client_kwargs() -> dict:
-    """OpenAI SDK kwargs pointing at OpenRouter (Blue Team only)."""
+    """OpenAI SDK kwargs for the Blue Team provider (Liquid or OpenRouter)."""
+    if BLUE_PROVIDER == PROVIDER_LIQUID:
+        return {
+            # "" (not None) so the SDK never falls back to OPENAI_API_KEY
+            "api_key": os.environ.get("LIQUID_API_KEY", "").strip(),
+            "base_url": os.environ.get("LIQUID_BASE_URL", "").strip() or LIQUID_BASE_URL,
+        }
     return {
-        "api_key": get_openrouter_api_key() or None,
+        "api_key": get_openrouter_api_key(),  # "" not None: no OPENAI_API_KEY fallback
         "base_url": (
             os.environ.get("OPENROUTER_BASE_URL", OPENROUTER_BASE_URL).strip()
             or OPENROUTER_BASE_URL
@@ -236,10 +250,9 @@ def is_harder_model() -> bool:
 
 def setup_api_key():
     """Ensure keys for Blue (OpenRouter) + Red / Red Advance (OpenAI or Gemini)."""
-    if not get_openrouter_api_key():
-        os.environ["OPENROUTER_API_KEY"] = input(
-            "Enter OpenRouter API Key (Blue): "
-        ).strip()
+    key_name = blue_api_key_name()
+    if not os.environ.get(key_name, "").strip():
+        os.environ[key_name] = input(f"Enter {key_name} (Blue): ").strip()
     print(f"Blue  — {blue_provider_label()}  [LOCKED]")
 
     red = get_red_provider()
