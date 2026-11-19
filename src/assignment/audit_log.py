@@ -47,8 +47,12 @@ class AuditLogPlugin:
         blocked: bool = False,
         layer: str | None = None,
         request_id: str | None = None,
+        detail: str | None = None,
     ):
-        """Store output, layer decision, latency; append to self.logs."""
+        """Store output, layer decision, latency; append to self.logs.
+
+        ``detail`` explains a block (e.g. the judge's verdict) when one is known.
+        """
         key = request_id or user_id
         start = self._open.pop(key, None)
         entry = self._inputs.pop(key, {"timestamp": utc_now_iso(), "input": None})
@@ -59,6 +63,7 @@ class AuditLogPlugin:
             "output": text,
             "blocked": blocked,
             "layer": layer,
+            "detail": detail,
             "latency_ms": round((time.perf_counter() - start) * 1000, 1) if start else None,
         })
 
