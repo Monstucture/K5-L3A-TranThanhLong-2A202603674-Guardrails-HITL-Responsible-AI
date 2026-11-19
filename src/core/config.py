@@ -277,21 +277,19 @@ def setup_api_key():
         )
 
 
-# Matched on normalized text (lowercase, accents stripped) with word boundaries.
+# Shared starter lists — also used by Red Advance (agents/guards_agent.py) with plain
+# substring matching, so do not extend them here. Blue's extended lists live in
+# guardrails/input_guardrails.py.
 ALLOWED_TOPICS = [
-    "banking", "bank", "account", "transaction", "transfer", "transfers",
-    "loan", "loans", "mortgage", "interest", "savings", "credit", "card",
-    "deposit", "withdrawal", "withdraw", "balance", "payment", "payments",
-    "money", "cash", "fee", "fees", "atm", "iban", "swift", "branch", "otp",
-    "pay", "bill", "bills", "electricity", "water bill",
-    "tai khoan", "giao dich", "tiet kiem", "lai suat", "lai", "tien",
-    "chuyen tien", "chuyen khoan", "rut tien", "gui tien", "thanh toan",
-    "the tin dung", "so du", "vay", "vay von", "ngan hang", "chi nhanh",
+    "banking", "account", "transaction", "transfer",
+    "loan", "interest", "savings", "credit",
+    "deposit", "withdrawal", "balance", "payment",
+    "tai khoan", "giao dich", "tiet kiem", "lai suat",
+    "chuyen tien", "the tin dung", "so du", "vay",
+    "ngan hang", "atm",
 ]
 
 BLOCKED_TOPICS = [
-    "hack", "hacking", "exploit", "malware", "ransomware", "phishing",
-    "keylogger", "weapon", "weapons", "drug", "drugs", "illegal",
-    "violence", "gambling", "casino", "bomb", "explosive", "kill", "murder",
-    "steal", "poison", "terrorist", "terror", "suicide", "porn", "nude",
+    "hack", "exploit", "weapon", "drug", "illegal",
+    "violence", "gambling", "bomb", "kill", "steal",
 ]
