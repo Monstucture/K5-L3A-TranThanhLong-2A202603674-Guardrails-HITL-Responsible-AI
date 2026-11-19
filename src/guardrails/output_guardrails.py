@@ -12,7 +12,13 @@ from google.adk.agents import llm_agent
 from google.adk import runners
 from google.adk.plugins import base_plugin
 
+from core.config import DEMO_SECRETS
 from core.utils import chat_with_agent
+
+BLOCKED_MESSAGE = (
+    "The response was blocked due to safety concerns. "
+    "Please contact support for assistance."
+)
 
 
 # ============================================================
@@ -47,6 +53,12 @@ def content_filter(response: str) -> dict:
         # - National ID (CMND/CCCD): r"\b\d{9}\b|\b\d{12}\b"
         # - API key pattern: r"sk-[a-zA-Z0-9-]+"
         # - Password pattern: r"password\s*[:=]\s*\S+"
+        "vn_phone": r"(?<!\d)(?:\+?84|0)\d{9,10}(?!\d)",
+        "email": r"[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}",
+        "national_id": r"(?<!\d)(?:\d{9}|\d{12})(?!\d)",
+        "api_key": r"sk-[A-Za-z0-9_-]+",
+        "password": r"password\s*(?:is|[:=])\s*\S+",   
+        "db_host": r"db\.vinbank\.internal(?::\d+)?",
     }
 
     for name, pattern in PII_PATTERNS.items():
@@ -54,6 +66,12 @@ def content_filter(response: str) -> dict:
         if matches:
             issues.append(f"{name}: {len(matches)} found")
             redacted = re.sub(pattern, "[REDACTED]", redacted, flags=re.IGNORECASE)
+
+    # Exact protected values (e.g. "admin123") have no keyword, so match them literally
+    for secret in DEMO_SECRETS:
+        if secret and secret in redacted:
+            issues.append("protected value: 1 found")
+            redacted = redacted.replace(secret, "[REDACTED]")
 
     return {
         "safe": len(issues) == 0,
@@ -97,8 +115,13 @@ If UNSAFE, add a brief reason on the next line.
 #     instruction=SAFETY_JUDGE_INSTRUCTION,
 # )
 
-safety_judge_agent = None  # TODO: Replace with implementation
-judge_runner = None
+safety_judge_agent = llm_agent.LlmAgent(
+    model="gemini-3.5-flash",
+    name="safety_judge",
+    instruction=SAFETY_JUDGE_INSTRUCTION,
+)
+
+judge_runner = None  # Will be initialized later
 
 
 def _init_judge():
@@ -143,9 +166,11 @@ async def llm_safety_check(response_text: str) -> dict:
 class OutputGuardrailPlugin(base_plugin.BasePlugin):
     """Plugin that checks agent output before sending to user."""
 
-    def __init__(self, use_llm_judge=True):
+    def __init__(self, use_llm_judge=True):  # judge is optional; needs GOOGLE_API_KEY
         super().__init__(name="output_guardrail")
         self.use_llm_judge = use_llm_judge and (safety_judge_agent is not None)
+        if self.use_llm_judge:
+            _init_judge()
         self.blocked_count = 0
         self.redacted_count = 0
         self.total_count = 0
@@ -180,8 +205,27 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
         #    - If unsafe: replace llm_response.content with a safe message
         #    - Increment self.blocked_count
         # 3. Return llm_response (possibly modified)
+        # Layer 1: regex redaction (PII + protected secrets)
+        result = content_filter(response_text)
+        text = response_text
+        if not result["safe"]:
+            text = result["redacted"]
+            self.redacted_count += 1
+            llm_response.content = types.Content(role="model", parts=[types.Part(text=text)])
 
-        return llm_response  # TODO: modify if needed
+        # Layer 2 (optional): judge the REDACTED text so secrets never reach the judge
+        if self.use_llm_judge:
+            try:
+                is_safe = (await llm_safety_check(text))["safe"]
+            except Exception:
+                is_safe = False  # fail-closed, same as NeMo rails in Red Advance
+            if not is_safe:
+                self.blocked_count += 1
+                llm_response.content = types.Content(
+                    role="model", parts=[types.Part(text=BLOCKED_MESSAGE)]
+                )
+
+        return llm_response
 
 
 # ============================================================
