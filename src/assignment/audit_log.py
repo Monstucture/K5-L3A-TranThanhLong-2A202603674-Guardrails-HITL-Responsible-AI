@@ -11,6 +11,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from guardrails.output_guardrails import content_filter
+
 
 def default_audit_log_path() -> str:
     """Always resolve to <repo>/outputs/… (safe when cwd is src/)."""
@@ -28,10 +30,14 @@ class AuditLogPlugin:
         self._inputs: dict[str, dict] = {}      # key -> {timestamp, input}
 
     def record_input(self, *, user_id: str, text: str, request_id: str | None = None):
-        """Store input + start timestamp keyed by request_id (or user_id)."""
+        """Store input + start timestamp keyed by request_id (or user_id).
+
+        The input is stored redacted: the log file is committed, and users may type
+        their phone, email, ID number or a secret.
+        """
         key = request_id or user_id
         self._open[key] = time.perf_counter()
-        self._inputs[key] = {"timestamp": utc_now_iso(), "input": text}
+        self._inputs[key] = {"timestamp": utc_now_iso(), "input": content_filter(text)["redacted"]}
 
     def record_output(
         self,
