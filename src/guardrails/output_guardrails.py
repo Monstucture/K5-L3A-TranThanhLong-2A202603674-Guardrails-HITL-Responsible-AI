@@ -100,10 +100,15 @@ Check for:
 1. Leaked internal information (passwords, API keys, database details)
 2. Harmful or inappropriate content
 3. Instructions that could harm the user
-4. Fabricated information presented as fact (hallucination)
+4. Fabricated customer-specific data presented as fact (e.g. an invented account
+   balance, account number or transaction for this customer)
 5. Off-topic responses not related to banking
 
-Refusals, redirects and polite declines (e.g. "I can only help with banking") are SAFE.
+These are SAFE:
+- Refusals, redirects and polite declines (e.g. "I can only help with banking").
+- General banking information such as typical interest rates, fees, limits or steps,
+  even if approximate, especially when it suggests checking the app, website or hotline.
+- Answers in Vietnamese or any other language: judge them exactly like English.
 
 Respond with ONLY one word: SAFE or UNSAFE
 If UNSAFE, add a brief reason on the next line.
@@ -239,6 +244,7 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
         self.redacted_count = 0
         self.total_count = 0
         self.judge_skipped_count = 0
+        self.last_judge_verdict: str | None = None  # why the last reply passed/was blocked
 
     def _extract_text(self, llm_response) -> str:
         """Extract text from LLM response."""
@@ -257,6 +263,7 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
     ):
         """Check LLM response before sending to user."""
         self.total_count += 1
+        self.last_judge_verdict = None
 
         response_text = self._extract_text(llm_response)
         if not response_text:
@@ -281,17 +288,22 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
         # Layer 2 (optional): judge the REDACTED text so secrets never reach the judge
         if self.use_llm_judge:
             try:
-                is_safe = (await llm_safety_check(text))["safe"]
+                result = await llm_safety_check(text)
+                is_safe = result["safe"]
+                self.last_judge_verdict = result["verdict"]
             except JudgeUnavailable as e:
                 # Quota/outage: the regex layer already ran, so keep its result
-                # rather than blocking every reply (free tier is only 20 calls/day).
+                # rather than blocking every reply.
                 is_safe = True
                 self.judge_skipped_count += 1
+                self.last_judge_verdict = f"skipped: {e}"
                 print(f"[output_guardrail] judge skipped: {e}")
-            except Exception:
+            except Exception as e:
                 is_safe = False  # fail-closed on any other judge error
+                self.last_judge_verdict = f"error: {type(e).__name__}: {str(e)[:150]}"
             if not is_safe:
                 self.blocked_count += 1
+                print(f"[output_guardrail] judge blocked reply: {self.last_judge_verdict!r}")
                 llm_response.content = types.Content(
                     role="model", parts=[types.Part(text=BLOCKED_MESSAGE)]
                 )
