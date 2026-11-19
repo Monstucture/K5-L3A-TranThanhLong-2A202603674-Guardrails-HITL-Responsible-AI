@@ -11,12 +11,10 @@ import textwrap
 import time
 
 from google.genai import types
-from google.adk.agents import llm_agent
-from google.adk import runners
 from google.adk.plugins import base_plugin
-from google.adk.models.google_llm import Gemini
 
-from core.config import DEMO_SECRETS
+from core.config import DEMO_SECRETS, LIQUID_BASE_URL
+from core.openai_runtime import OpenAIAgent, OpenAIRunner
 from core.utils import chat_with_agent
 
 BLOCKED_MESSAGE = (
@@ -121,32 +119,39 @@ If UNSAFE, add a brief reason on the next line.
 #     instruction=SAFETY_JUDGE_INSTRUCTION,
 # )
 
-# Free tier limits per model: 5 requests/minute, 20 requests/day.
-JUDGE_MODEL = os.getenv("JUDGE_MODEL", "gemini-3.5-flash")
-JUDGE_MIN_INTERVAL_S = float(os.getenv("JUDGE_MIN_INTERVAL_S", "13"))  # 60s / 5 RPM + margin
-JUDGE_MAX_CALLS = int(os.getenv("JUDGE_MAX_CALLS", "10"))  # per run; keeps the 20/day cap safe
+# Judge runs on Liquid AI's OpenAI-compatible API (Gemini free tier was constantly 503).
+# lfm3-1.7b is a different model from Blue (lfm2.5-24b-a2b), so the judge stays independent.
+JUDGE_MODEL = os.getenv("JUDGE_MODEL", "lfm3-1.7b")
+JUDGE_MIN_INTERVAL_S = float(os.getenv("JUDGE_MIN_INTERVAL_S", "1"))  # gentle spacing
+JUDGE_MAX_CALLS = int(os.getenv("JUDGE_MAX_CALLS", "20"))  # per-run cost cap
 
-safety_judge_agent = llm_agent.LlmAgent(
-    # attempts=1: no silent SDK retries, so 1 judge call = exactly 1 API request
-    model=Gemini(model=JUDGE_MODEL, retry_options=types.HttpRetryOptions(attempts=1)),
-    name="safety_judge",
-    instruction=SAFETY_JUDGE_INSTRUCTION,
+safety_judge_agent = OpenAIAgent(
+    name="safety_judge", instruction=SAFETY_JUDGE_INSTRUCTION, provider="liquid"
 )
 
-judge_runner = None  # Will be initialized later
+judge_runner = None  # created by _init_judge()
 
 
 def _init_judge():
-    """Initialize the judge agent and runner (call after creating the agent)."""
+    """Create the judge runner (Liquid, OpenAI SDK)."""
     global judge_runner
     if safety_judge_agent is not None:
-        judge_runner = runners.InMemoryRunner(
-            agent=safety_judge_agent, app_name="safety_judge"
+        judge_runner = OpenAIRunner(
+            app_name="safety_judge",
+            model=JUDGE_MODEL,
+            provider="liquid",
+            temperature=0.0,  # deterministic verdicts
+            client_kwargs={
+                # "" (not None) so the SDK never falls back to OPENAI_API_KEY
+                "api_key": os.environ.get("LIQUID_API_KEY", "").strip(),
+                "base_url": os.environ.get("LIQUID_BASE_URL", "").strip() or LIQUID_BASE_URL,
+                "max_retries": 0,  # 1 judge call = exactly 1 API request
+            },
         )
 
 
 class JudgeUnavailable(Exception):
-    """Judge skipped: per-run budget used up, or Gemini rate-limited (429) / overloaded (503)."""
+    """Judge skipped: per-run budget used up, or judge API rate-limited (429) / overloaded (503)."""
 
 
 _judge_lock = asyncio.Lock()
@@ -155,15 +160,20 @@ _judge_calls = 0
 _judge_cache: dict = {}
 
 
-def _is_quota_error(exc) -> bool:
-    """True if any exception in the chain is a 429 or 503 (ADK wraps the genai error)."""
+def _quota_code(exc) -> int | None:
+    """Return 429/503 if any exception in the chain carries it.
+
+    OpenAI SDK errors use ``status_code``; google-genai errors use ``code``.
+    """
     for _ in range(10):  # bounded walk of __cause__/__context__
         if exc is None:
-            return False
-        if getattr(exc, "code", None) in (429, 503):
-            return True
+            return None
+        for attr in ("status_code", "code"):
+            value = getattr(exc, attr, None)
+            if value in (429, 503):
+                return value
         exc = exc.__cause__ or exc.__context__
-    return False
+    return None
 
 
 async def llm_safety_check(response_text: str) -> dict:
@@ -179,7 +189,7 @@ async def llm_safety_check(response_text: str) -> dict:
         dict with 'safe' (bool) and 'verdict' (str)
 
     Raises:
-        JudgeUnavailable: budget used up, or Gemini returned 429/503.
+        JudgeUnavailable: budget used up, or the judge API returned 429/503.
     """
     global _judge_last_call, _judge_calls
 
@@ -201,8 +211,10 @@ async def llm_safety_check(response_text: str) -> dict:
         try:
             verdict, _ = await chat_with_agent(safety_judge_agent, judge_runner, prompt)
         except Exception as e:
-            if _is_quota_error(e):
-                raise JudgeUnavailable(f"Gemini rate-limited/overloaded: {str(e)[:100]}") from e
+            code = _quota_code(e)
+            if code:
+                reason = "overloaded, try later" if code == 503 else "rate limit hit"
+                raise JudgeUnavailable(f"judge API {code} ({reason})") from e
             raise
 
     # Only the first word decides: the reason line may contain "unsafe" or "safe".
@@ -228,7 +240,7 @@ async def llm_safety_check(response_text: str) -> dict:
 class OutputGuardrailPlugin(base_plugin.BasePlugin):
     """Plugin that checks agent output before sending to user."""
 
-    def __init__(self, use_llm_judge=True):  # judge is optional; needs GOOGLE_API_KEY
+    def __init__(self, use_llm_judge=True):  # judge is optional; needs LIQUID_API_KEY
         super().__init__(name="output_guardrail")
         self.use_llm_judge = use_llm_judge and (safety_judge_agent is not None)
         if self.use_llm_judge:
