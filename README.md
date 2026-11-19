@@ -158,7 +158,12 @@ cp .env.example .env
 pip install -r requirements.txt
 ```
 
-Điền `.env`: `OPENROUTER_API_KEY` + `RED_TEAM_PROVIDER=openai|gemini` (và key tương ứng).  
+Điền `.env`: `LIQUID_API_KEY` (Blue + LLM-as-Judge) + `RED_TEAM_PROVIDER=openai|gemini` (và key tương ứng).  
 Rồi mở [`CHECKPOINTS.md`](CHECKPOINTS.md) và làm lần lượt Checkpoint 1 → 5.
+
+> **Thay đổi so với starter (Blue model):** OpenRouter `liquid/lfm-3-1.7b:free` không còn được hỗ trợ, và tài khoản OpenRouter hết credit.
+> Blue chạy model Liquid `lfm2.5-24b-a2b` qua API chính chủ của Liquid AI (`https://api.liquid.ai/openai/v1`, key `LIQUID_API_KEY`);
+> LLM-as-Judge dùng `lfm3-1.7b` (model khác Blue, để judge độc lập). Đổi lại OpenRouter: sửa `BLUE_PROVIDER` / `BLUE_MODEL` trong `src/core/config.py`.  
+> *Blue model change: the starter's OpenRouter model was retired and the account ran out of credit, so Blue uses Liquid's own API; switch back in `src/core/config.py`.*
 
 Nộp theo [`SUBMISSION.md`](SUBMISSION.md) · Quy định: [`RULES.md`](RULES.md).
