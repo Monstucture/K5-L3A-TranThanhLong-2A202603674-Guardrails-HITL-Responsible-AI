@@ -133,6 +133,27 @@ INJECTION_PATTERNS = [
     r"\bbo\s+qua\s+((tat\s+ca|moi|cac)\s+)*(huong\s+dan|chi\s+dan|quy\s+tac|lenh|yeu\s+cau)\b",
     r"\b(tiet\s+lo|hien\s+thi|in\s+ra|cho\s+toi\s+xem)\b[^.?!]{0,40}"
     r"\b(system\s+prompt|prompt\s+goc|huong\s+dan\s+he\s+thong|mat\s+khau)\b",
+
+    # --- Repeat / translate prompt ---
+    r"\b(repeat|translate|paraphrase|summarize)\b[^.?!]{0,40}\b(the\s+|all\s+|everything\s+)?"
+    r"(text|words|content|prompt|instructions?)\s+(above|before|in\s+the\s+previous\s+message)\b",
+    r"\bwhat\s+(does|is)\s+(the\s+)?(system|hidden|initial|original)\s+(prompt|instructions?)\s+(say|mean)\b",
+
+    # --- Miscellaneous ---
+    r"\b(what|which)\s+(is|are|'s)\s+(the\s+)?(model|llm|version|system prompt|instructions?)\b",
+    r"\b(what|which)\s+(is|are|'s)\s+(the\s+)?(system|hidden|initial|original)\s+(prompt|instructions?)\s+(say|mean)\b",
+    r"\b(what|which)\s+(is|are|'s)\s+(the\s+)?(admin |root |master )?(password|api key|secret key|db host|database host)\b",
+    r"\b(what|which)\s+(is|are|'s)\s+(the\s+)?(system|hidden|initial|original)\s+(prompt|instructions?)\s+(say|mean)\b",
+
+    # --- Injection ---
+    r"\b(injection|prompt injection|jailbreak|jail breaking|jail-broken|jail-breaking)\b",
+    r"SELECT\s+.*\s+FROM\s+.*\s+WHERE\s+.*\s*=\s*.*",
+    r"\b(drop|delete|truncate)\s+(table|database|schema)\b",
+    r"\b(insert|update|alter)\s+(table|database|schema)\b",
+    r"\b(UNION|JOIN)\s+SELECT\b",
+    r"\b(OR|AND)\s+1\s*=\s*1\b",
+    r"\b(OR|AND)\s+TRUE\b",
+    r"\b(OR|AND)\s+FALSE\b",
 ]
 
 _INJECTION_RES = [re.compile(p) for p in INJECTION_PATTERNS]
