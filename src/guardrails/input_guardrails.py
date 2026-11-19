@@ -93,7 +93,6 @@ INJECTION_PATTERNS = [
     r"\b(end|stop)\s+of\s+(the\s+)?(system|user|original)\s+(prompt|message|input|instructions?)\b",
 
     # --- Đổi vai / jailbreak ---
-    r"\byou\s+are\s+now\b",
     r"\byou(?:'re| are)\s+now\b",
     r"\bpretend\s+(you are|you're|to be|that you)\b",
     r"\b(act|behave|roleplay|role-play|respond)\s+(as|like)\s+(a |an |if you are )?"
@@ -116,7 +115,6 @@ INJECTION_PATTERNS = [
 
     # --- Lấy secret / credential ---
     r"\b(admin|root|database|db|master|system)\s+(password|passwd|credentials?|secret|api key|token)s?\b",
-    r"\bwhat\s+(is|are|'s)\s+(the\s+)?(admin |root |master )?(password|api key|secret key|db host|database host)\b",
 
     # --- Exfiltration (gửi secret ra ngoài) ---
     r"\b(send|post|upload|forward|email|exfiltrate|leak|transmit)\b[^.?!]{0,80}"
@@ -125,7 +123,6 @@ INJECTION_PATTERNS = [
     # --- Yêu cầu code / nội dung độc hại ---
     r"\b(write|create|generate|build)\s+(a |an |some )?(malicious|harmful|dangerous|destructive|ransomware|keylogger|virus|exploit|phishing)\b",
     r"\b(write|create|generate|build)\s+(code|script|program)\b[^.?!]{0,40}\b(steals?|exfiltrates?|dumps?|harvests?)\b",
-    r"\bwrite hello world in (python|assembly|c|java|javascript|ruby|go|rust)\b",
 
     # --- Bypass guardrail ---
     r"\b(bypass|disable|turn off|circumvent|get around|evade)\s+(the\s+|your\s+|all\s+|any\s+)?"
@@ -159,17 +156,16 @@ INJECTION_PATTERNS = [
     r"\b(what|which)\s+(is|are|'s)\s+(the\s+)?(model|llm|version|system prompt|instructions?)\b",
     r"\b(what|which)\s+(is|are|'s)\s+(the\s+)?(system|hidden|initial|original)\s+(prompt|instructions?)\s+(say|mean)\b",
     r"\b(what|which)\s+(is|are|'s)\s+(the\s+)?(admin |root |master )?(password|api key|secret key|db host|database host)\b",
-    r"\b(what|which)\s+(is|are|'s)\s+(the\s+)?(system|hidden|initial|original)\s+(prompt|instructions?)\s+(say|mean)\b",
 
     # --- Injection ---
+    # Text is lowercased by _normalize(), so these patterns must be lowercase too.
     r"\b(injection|prompt injection|jailbreak|jail breaking|jail-broken|jail-breaking)\b",
-    r"SELECT\s+.*\s+FROM\s+.*\s+WHERE\s+.*\s*=\s*.*",
+    r"select\s+.*\s+from\s+.*\s+where\s+.*\s*=\s*.*",
     r"\b(drop|delete|truncate)\s+(table|database|schema)\b",
     r"\b(insert|update|alter)\s+(table|database|schema)\b",
-    r"\b(UNION|JOIN)\s+SELECT\b",
-    r"\b(OR|AND)\s+1\s*=\s*1\b",
-    r"\b(OR|AND)\s+TRUE\b",
-    r"\b(OR|AND)\s+FALSE\b",
+    r"\b(union|join)\s+select\b",
+    r"\b(or|and)\s+1\s*=\s*1\b",
+    r"'\s*(or|and)\s+(true|false)\b",  # needs the quote, so "true or false?" is not blocked
 ]
 
 _INJECTION_RES = [re.compile(p) for p in INJECTION_PATTERNS]
@@ -179,7 +175,7 @@ COMPACT_ATTACKS = [
     "ignoreprevious", "ignoreabove", "ignoreallinstructions", "ignoreallprevious",
     "disregardprevious", "forgetprevious", "systemprompt", "revealyourprompt",
     "revealyourinstructions", "youarenow", "pretendyouare", "jailbreak",
-    "developermode", "dananything",
+    "developermode",
 ]
 
 
