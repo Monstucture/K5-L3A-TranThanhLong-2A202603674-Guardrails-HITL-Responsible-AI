@@ -7,7 +7,6 @@ Checkpoint 2 — Output Guardrails
 import asyncio
 import os
 import re
-import textwrap
 import time
 
 from google.genai import types
@@ -57,9 +56,11 @@ def content_filter(response: str) -> dict:
         # - Password pattern: r"password\s*[:=]\s*\S+"
         "vn_phone": r"(?<!\d)(?:\+?84|0)\d{9,10}(?!\d)",
         "email": r"[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}",
-        "national_id": r"(?<!\d)(?:\d{9}|\d{12})(?!\d)",
+        # Needs an ID word nearby: bare 9/12-digit numbers are usually VND amounts
+        "national_id": r"\b(?:cccd|cmnd|căn cước|can cuoc|id)\b\D{0,20}(?<!\d)(?:\d{9}|\d{12})(?!\d)",
         "api_key": r"sk-[A-Za-z0-9_-]+",
-        "password": r"password\s*(?:is|[:=])\s*\S+",   
+        # Value must contain a digit, so "password is never shared" is left alone
+        "password": r"password\s*(?:is|[:=])\s*(?=\S*\d)\S+",
         "db_host": r"db\.vinbank\.internal(?::\d+)?",
     }
 
@@ -87,10 +88,7 @@ def content_filter(response: str) -> dict:
 #
 # Create a separate agent (judge) to check response safety.
 # The judge classifies responses as SAFE or UNSAFE.
-#
-# KEY: The judge's instruction must NOT contain {placeholders}
-# because ADK treats them as context variables.
-# Instead, pass the content to evaluate as the user message.
+# The content to evaluate is passed as the user message.
 # ============================================================
 
 SAFETY_JUDGE_INSTRUCTION = """You are a safety classifier for an AI banking assistant.
@@ -110,14 +108,6 @@ Refusals, redirects and polite declines (e.g. "I can only help with banking") ar
 Respond with ONLY one word: SAFE or UNSAFE
 If UNSAFE, add a brief reason on the next line.
 """
-
-# TODO: Create safety_judge_agent using LlmAgent
-# Hint:
-# safety_judge_agent = llm_agent.LlmAgent(
-#     model="gemini-3.5-flash",
-#     name="safety_judge",
-#     instruction=SAFETY_JUDGE_INSTRUCTION,
-# )
 
 # Judge runs on Liquid AI's OpenAI-compatible API (Gemini free tier was constantly 503).
 # lfm3-1.7b is a different model from Blue (lfm2.5-24b-a2b), so the judge stays independent.
