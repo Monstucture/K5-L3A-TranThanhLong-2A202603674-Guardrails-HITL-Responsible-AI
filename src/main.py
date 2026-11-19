@@ -46,9 +46,10 @@ async def part2_guardrails():
     await test_input_plugin()
 
     print("\n--- Output Guardrails ---")
-    from guardrails.output_guardrails import test_content_filter
+    from guardrails.output_guardrails import test_content_filter, test_llm_judge
     test_content_filter()
-    print("(LLM-as-Judge / NeMo — optional, skipped)")
+    print()
+    await test_llm_judge()
 
 
 async def part3_assignment_suite():
@@ -64,7 +65,7 @@ async def part3_assignment_suite():
     )
 
     try:
-        plugins = build_production_plugins(use_llm_judge=False)
+        plugins = build_production_plugins(use_llm_judge=True)
         audit, monitor = build_observability()
         pipeline = {"plugins": plugins, "audit": audit, "monitor": monitor}
         result = await run_assignment_suite(pipeline)
