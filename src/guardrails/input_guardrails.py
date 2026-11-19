@@ -23,6 +23,22 @@ from core.config import ALLOWED_TOPICS, BLOCKED_TOPICS
 # Quyết định rõ ràng — tránh đảo nghĩa True/False
 InputStatus = Literal["ALLOW", "BLOCK"]
 
+# Blue's own topic lists: the shared config lists plus extras. Kept here, not in
+# core.config, because Red Advance reuses the shared lists with substring matching.
+# Matched on normalized text (lowercase, accents stripped) with word boundaries.
+BLUE_ALLOWED_TOPICS = ALLOWED_TOPICS + [
+    "bank", "transfers", "loans", "mortgage", "card", "withdraw", "payments",
+    "money", "cash", "fee", "fees", "iban", "swift", "branch", "otp",
+    "pay", "bill", "bills", "electricity", "water bill",
+    "lai", "tien", "chuyen khoan", "rut tien", "gui tien", "thanh toan",
+    "vay von", "chi nhanh",
+]
+BLUE_BLOCKED_TOPICS = BLOCKED_TOPICS + [
+    "hacking", "malware", "ransomware", "phishing", "keylogger", "weapons",
+    "drugs", "casino", "explosive", "murder", "poison", "terrorist", "terror",
+    "suicide", "porn", "nude",
+]
+
 
 # ============================================================
 # Normalization — chạy trước mọi check
@@ -213,9 +229,9 @@ def topic_filter(user_input: str) -> InputStatus:
     """
     text = _normalize(user_input)
 
-    if any(re.search(rf"\b{re.escape(t)}", text) for t in BLOCKED_TOPICS):
+    if any(re.search(rf"\b{re.escape(t)}", text) for t in BLUE_BLOCKED_TOPICS):
         return "BLOCK"
-    if any(re.search(rf"\b{re.escape(t)}s?\b", text) for t in ALLOWED_TOPICS):
+    if any(re.search(rf"\b{re.escape(t)}s?\b", text) for t in BLUE_ALLOWED_TOPICS):
         return "ALLOW"
     return "BLOCK"
 
