@@ -188,15 +188,22 @@ async def _ask(agent, runner, text, *, plugins, audit, monitor, request_id) -> d
         monitor.judge_checks += 1
         monitor.judge_fails += int(layer == "output_guardrail")
 
+    # Why the output layer blocked (judge verdict or judge error), for debugging
+    judge_verdict = out.last_judge_verdict if (out is not None and layer == "output_guardrail") else None
+
     audit.record_output(
-        user_id=USER_ID, text=response, blocked=blocked, layer=layer, request_id=request_id
+        user_id=USER_ID, text=response, blocked=blocked, layer=layer,
+        request_id=request_id, detail=judge_verdict,
     )
-    return {
+    row = {
         "input": _preview(text),
         "blocked": blocked,
         "layer": layer,
         "response_preview": response[:200],
     }
+    if judge_verdict:
+        row["judge_verdict"] = judge_verdict
+    return row
 
 
 async def run_assignment_suite(pipeline=None, out_dir: str | Path | None = None) -> dict:
