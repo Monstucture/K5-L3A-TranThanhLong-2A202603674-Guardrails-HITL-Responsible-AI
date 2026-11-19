@@ -4,13 +4,17 @@ Checkpoint 2 — Output Guardrails
   - OutputGuardrailPlugin (ADK)           ← bắt buộc
   - LLM-as-Judge                          ← optional (không chấm)
 """
+import asyncio
+import os
 import re
 import textwrap
+import time
 
 from google.genai import types
 from google.adk.agents import llm_agent
 from google.adk import runners
 from google.adk.plugins import base_plugin
+from google.adk.models.google_llm import Gemini
 
 from core.config import DEMO_SECRETS
 from core.utils import chat_with_agent
@@ -103,6 +107,8 @@ Check for:
 4. Fabricated information presented as fact (hallucination)
 5. Off-topic responses not related to banking
 
+Refusals, redirects and polite declines (e.g. "I can only help with banking") are SAFE.
+
 Respond with ONLY one word: SAFE or UNSAFE
 If UNSAFE, add a brief reason on the next line.
 """
@@ -115,8 +121,14 @@ If UNSAFE, add a brief reason on the next line.
 #     instruction=SAFETY_JUDGE_INSTRUCTION,
 # )
 
+# Free tier limits per model: 5 requests/minute, 20 requests/day.
+JUDGE_MODEL = os.getenv("JUDGE_MODEL", "gemini-3.5-flash")
+JUDGE_MIN_INTERVAL_S = float(os.getenv("JUDGE_MIN_INTERVAL_S", "13"))  # 60s / 5 RPM + margin
+JUDGE_MAX_CALLS = int(os.getenv("JUDGE_MAX_CALLS", "10"))  # per run; keeps the 20/day cap safe
+
 safety_judge_agent = llm_agent.LlmAgent(
-    model="gemini-3.5-flash",
+    # attempts=1: no silent SDK retries, so 1 judge call = exactly 1 API request
+    model=Gemini(model=JUDGE_MODEL, retry_options=types.HttpRetryOptions(attempts=1)),
     name="safety_judge",
     instruction=SAFETY_JUDGE_INSTRUCTION,
 )
@@ -133,22 +145,72 @@ def _init_judge():
         )
 
 
+class JudgeUnavailable(Exception):
+    """Judge skipped: per-run budget used up, or Gemini rate-limited (429) / overloaded (503)."""
+
+
+_judge_lock = asyncio.Lock()
+_judge_last_call = 0.0
+_judge_calls = 0
+_judge_cache: dict = {}
+
+
+def _is_quota_error(exc) -> bool:
+    """True if any exception in the chain is a 429 or 503 (ADK wraps the genai error)."""
+    for _ in range(10):  # bounded walk of __cause__/__context__
+        if exc is None:
+            return False
+        if getattr(exc, "code", None) in (429, 503):
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
 async def llm_safety_check(response_text: str) -> dict:
     """Use LLM judge to check if response is safe.
+
+    Calls are serialized, spaced JUDGE_MIN_INTERVAL_S apart, capped at
+    JUDGE_MAX_CALLS per run, and cached by text.
 
     Args:
         response_text: The agent's response to evaluate
 
     Returns:
         dict with 'safe' (bool) and 'verdict' (str)
+
+    Raises:
+        JudgeUnavailable: budget used up, or Gemini returned 429/503.
     """
+    global _judge_last_call, _judge_calls
+
     if safety_judge_agent is None or judge_runner is None:
         return {"safe": True, "verdict": "Judge not initialized — skipping"}
+    if response_text in _judge_cache:
+        return _judge_cache[response_text]
 
-    prompt = f"Evaluate this AI response for safety:\n\n{response_text}"
-    verdict, _ = await chat_with_agent(safety_judge_agent, judge_runner, prompt)
-    is_safe = "SAFE" in verdict.upper() and "UNSAFE" not in verdict.upper()
-    return {"safe": is_safe, "verdict": verdict.strip()}
+    async with _judge_lock:
+        if _judge_calls >= JUDGE_MAX_CALLS:
+            raise JudgeUnavailable(f"judge budget used ({JUDGE_MAX_CALLS} calls this run)")
+        wait = JUDGE_MIN_INTERVAL_S - (time.monotonic() - _judge_last_call)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _judge_calls += 1
+        _judge_last_call = time.monotonic()  # failed calls still count toward spacing
+
+        prompt = f"Evaluate this AI response for safety:\n\n{response_text}"
+        try:
+            verdict, _ = await chat_with_agent(safety_judge_agent, judge_runner, prompt)
+        except Exception as e:
+            if _is_quota_error(e):
+                raise JudgeUnavailable(f"Gemini rate-limited/overloaded: {str(e)[:100]}") from e
+            raise
+
+    # Only the first word decides: the reason line may contain "unsafe" or "safe".
+    # Empty or unexpected output counts as UNSAFE (fail-closed).
+    first_word = (verdict.strip().split() or [""])[0].strip(".:,!*").upper()
+    result = {"safe": first_word == "SAFE", "verdict": verdict.strip()}
+    _judge_cache[response_text] = result
+    return result
 
 
 # ============================================================
@@ -174,6 +236,7 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
         self.blocked_count = 0
         self.redacted_count = 0
         self.total_count = 0
+        self.judge_skipped_count = 0
 
     def _extract_text(self, llm_response) -> str:
         """Extract text from LLM response."""
@@ -217,8 +280,14 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
         if self.use_llm_judge:
             try:
                 is_safe = (await llm_safety_check(text))["safe"]
+            except JudgeUnavailable as e:
+                # Quota/outage: the regex layer already ran, so keep its result
+                # rather than blocking every reply (free tier is only 20 calls/day).
+                is_safe = True
+                self.judge_skipped_count += 1
+                print(f"[output_guardrail] judge skipped: {e}")
             except Exception:
-                is_safe = False  # fail-closed, same as NeMo rails in Red Advance
+                is_safe = False  # fail-closed on any other judge error
             if not is_safe:
                 self.blocked_count += 1
                 llm_response.content = types.Content(
