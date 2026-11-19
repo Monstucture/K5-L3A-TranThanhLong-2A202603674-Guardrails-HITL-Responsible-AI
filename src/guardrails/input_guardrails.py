@@ -10,6 +10,8 @@ Status convention (không dùng True/False mơ hồ):
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 import unicodedata
 from typing import Literal
@@ -183,6 +185,24 @@ COMPACT_ATTACKS = [
 # detect_injection
 # ============================================================
 
+_BASE64_TOKEN = re.compile(r"[A-Za-z0-9+/]{16,}={0,2}")
+
+
+def _base64_decoded(user_input: str) -> list[str]:
+    """Decode base64-looking tokens so an encoded attack is checked as plain text.
+
+    shortcut: one decode level only (no nested base64), base64 only (no hex/ROT13).
+    """
+    out = []
+    for token in _BASE64_TOKEN.findall(user_input):
+        padded = token + "=" * (-len(token) % 4)
+        try:
+            out.append(base64.b64decode(padded, validate=True).decode("utf-8"))
+        except (binascii.Error, UnicodeDecodeError, ValueError):
+            continue
+    return out
+
+
 def detect_injection(user_input: str) -> InputStatus:
     """Detect prompt injection patterns in user input.
 
@@ -192,14 +212,15 @@ def detect_injection(user_input: str) -> InputStatus:
     Returns:
         ``"BLOCK"`` if injection detected (chặn), ``"ALLOW"`` otherwise (cho qua).
     """
-    text = _normalize(user_input)
+    for candidate in [user_input, *_base64_decoded(user_input)]:
+        text = _normalize(candidate)
 
-    if any(rx.search(text) for rx in _INJECTION_RES):
-        return "BLOCK"
+        if any(rx.search(text) for rx in _INJECTION_RES):
+            return "BLOCK"
 
-    compact = _compact(text)
-    if any(keyword in compact for keyword in COMPACT_ATTACKS):
-        return "BLOCK"
+        compact = _compact(text)
+        if any(keyword in compact for keyword in COMPACT_ATTACKS):
+            return "BLOCK"
 
     return "ALLOW"
 
